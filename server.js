@@ -19,7 +19,6 @@ app.post('/api/submit/eligible', (req, res) => {
 
 app.post('/api/submit/addresses', (req, res) => {
     const addresses = req.body.addresses;
-    console.log('Received addresses:', addresses);
     if (!addresses || !Array.isArray(addresses)) {
         return res.status(400).json({
             success: false,
