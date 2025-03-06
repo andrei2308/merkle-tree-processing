@@ -1,9 +1,10 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const { MerkleTree } = require('merkletreejs');
-const keccak256 = require('keccak256');
-
+import express from 'express';
+import bodyParser from 'body-parser';
+import cors from "cors";
+import { MerkleTree } from 'merkletreejs';
+import keccak256 from 'keccak256';
+import { address, abi } from './constants/constants.js';
+import { ethers } from 'ethers';
 const app = express();
 
 app.use(bodyParser.json());
@@ -12,13 +13,19 @@ app.use(cors());
 const merkleTreesStore = {};
 const achievementsStore = [];
 
-function createLeaf(address) {
-    const addressBuf = typeof address === 'string' ? Buffer.from(address) : address;
-    return keccak256(addressBuf);
+function createLeaf(address, amount = 5n) {
+    const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
+        ['address', 'uint256'],
+        [address, amount]
+    );
+    const innerHash = ethers.keccak256(encodedData);
+    return ethers.keccak256(
+        ethers.solidityPacked(['bytes'], [innerHash])
+    );
 }
 
 function createMerkleTree(addresses) {
-    const leaves = addresses.map(createLeaf);
+    const leaves = addresses.map(address => createLeaf(address));
     return new MerkleTree(leaves, keccak256, { sortPairs: true });
 }
 
@@ -168,6 +175,58 @@ app.get('/api/merkle/trees', (req, res) => {
     res.status(200).json({
         success: true,
         trees
+    });
+});
+
+app.get('/api/claim/:address', (req, res) => {
+    const address = req.params.address;
+    const amount = 5n;
+    const treeId = 'default';
+
+    if (!merkleTreesStore[treeId]) {
+        return res.status(404).json({
+            success: false,
+            message: `Merkle tree with ID ${treeId} not found`
+        });
+    }
+
+    const { tree, addresses } = merkleTreesStore[treeId];
+    if (!addresses.map(addr => addr.toLowerCase()).includes(address.toLowerCase())) {
+        return res.status(200).json({
+            success: false,
+            message: "Address is not eligible",
+            eligible: false
+        });
+    }
+
+    const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
+        ['address', 'uint256'],
+        [address, amount]
+    );
+    const innerHash = ethers.keccak256(encodedData);
+    const leaf = ethers.keccak256(
+        ethers.solidityPacked(['bytes'], [innerHash])
+    );
+
+    const proof = tree.getHexProof(leaf);
+    const isValid = tree.verify(proof, leaf, tree.getRoot());
+
+    if (!isValid) {
+        return res.status(200).json({
+            success: false,
+            message: "Invalid proof",
+            eligible: false
+        });
+    }
+
+    res.status(200).json({
+        success: true,
+        message: "Claim data generated successfully",
+        data: {
+            address,
+            amount: Number(amount),
+            proof
+        }
     });
 });
 
